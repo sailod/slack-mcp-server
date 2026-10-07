@@ -67,7 +67,9 @@ func (t *UserAgentTransport) RoundTrip(req *http.Request) (*http.Response, error
 	clonedReq.Header.Set("User-Agent", t.userAgent)
 
 	for _, cookie := range t.cookies {
-		clonedReq.AddCookie(cookie)
+		if sessionCookieMatchesURL(cookie, clonedReq.URL) {
+			clonedReq.AddCookie(cookie)
+		}
 	}
 
 	t.logger.Debug("Making request", zap.String("url", clonedReq.URL.String()))
@@ -77,6 +79,22 @@ func (t *UserAgentTransport) RoundTrip(req *http.Request) (*http.Response, error
 		t.logger.Error("Request failed", zap.Error(err))
 	}
 	return resp, err
+}
+
+// AddCookie does not enforce cookie domain or Secure attributes. Check the
+// destination on every round trip, including requests created by redirects.
+// These are session credentials: require HTTPS even if Secure was omitted.
+func sessionCookieMatchesURL(cookie *http.Cookie, target *url.URL) bool {
+	if cookie == nil || target == nil || target.Scheme != "https" {
+		return false
+	}
+	domain := strings.TrimPrefix(strings.ToLower(cookie.Domain), ".")
+	if domain == "" {
+		// A host-only cookie needs an origin, which this transport does not have.
+		return false
+	}
+	host := strings.ToLower(target.Hostname())
+	return host == domain || (net.ParseIP(host) == nil && strings.HasSuffix(host, "."+domain))
 }
 
 // uTLSTransport is a custom http.RoundTripper that uses uTLS for TLS connections
