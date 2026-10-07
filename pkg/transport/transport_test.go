@@ -8,9 +8,57 @@ import (
 	"testing"
 
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 type recordingTransport func(*http.Request) (*http.Response, error)
+
+func TestUnitTLSVerificationConfiguration(t *testing.T) {
+	t.Setenv("SLACK_MCP_PROXY", "")
+	t.Setenv("SLACK_MCP_SERVER_CA", "")
+	t.Setenv("SLACK_MCP_SERVER_CA_TOOLKIT", "")
+	for _, customTLS := range []string{"", "true"} {
+		for _, tc := range []struct {
+			value    string
+			insecure bool
+		}{
+			{"", false}, {"false", false}, {"0", false}, {"FALSE", false},
+			{"true", true}, {"1", true}, {"TRUE", true},
+		} {
+			t.Run("custom="+customTLS+"/insecure="+tc.value, func(t *testing.T) {
+				t.Setenv("SLACK_MCP_CUSTOM_TLS", customTLS)
+				t.Setenv("SLACK_MCP_SERVER_CA_INSECURE", tc.value)
+				client := ProvideHTTPClient(nil, zap.NewNop())
+				wrapper := client.Transport.(*UserAgentTransport)
+				var got bool
+				if customTLS == "" {
+					got = wrapper.roundTripper.(*http.Transport).TLSClientConfig.InsecureSkipVerify
+				} else {
+					got = wrapper.roundTripper.(*uTLSTransport).tlsConfig.InsecureSkipVerify
+				}
+				if got != tc.insecure {
+					t.Fatalf("InsecureSkipVerify=%v, want %v", got, tc.insecure)
+				}
+			})
+		}
+	}
+}
+
+func TestUnitTLSVerificationRejectsInvalidBoolean(t *testing.T) {
+	t.Setenv("SLACK_MCP_PROXY", "")
+	t.Setenv("SLACK_MCP_CUSTOM_TLS", "")
+	t.Setenv("SLACK_MCP_SERVER_CA", "")
+	t.Setenv("SLACK_MCP_SERVER_CA_TOOLKIT", "")
+	t.Setenv("SLACK_MCP_SERVER_CA_INSECURE", "typo")
+	// Replace the fatal exit with a panic so configuration failure is testable.
+	logger := zap.NewNop().WithOptions(zap.WithFatalHook(zapcore.WriteThenPanic))
+	defer func() {
+		if recover() == nil {
+			t.Error("invalid boolean must fail configuration")
+		}
+	}()
+	ProvideHTTPClient(nil, logger)
+}
 
 func (f recordingTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	return f(r)

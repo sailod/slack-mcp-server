@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -393,11 +394,17 @@ func ProvideHTTPClient(cookies []*http.Cookie, logger *zap.Logger) *http.Client 
 	}
 
 	insecure := false
-	if os.Getenv("SLACK_MCP_SERVER_CA_INSECURE") != "" {
+	if value := os.Getenv("SLACK_MCP_SERVER_CA_INSECURE"); value != "" {
+		var err error
+		insecure, err = strconv.ParseBool(value)
+		if err != nil {
+			logger.Fatal("SLACK_MCP_SERVER_CA_INSECURE must be a boolean", zap.Error(err))
+		}
+	}
+	if insecure {
 		if localCertFile := os.Getenv("SLACK_MCP_SERVER_CA"); localCertFile != "" {
 			logger.Fatal("SLACK_MCP_SERVER_CA and SLACK_MCP_SERVER_CA_INSECURE cannot be used together")
 		}
-		insecure = true
 	}
 
 	userAgent := defaultUA
